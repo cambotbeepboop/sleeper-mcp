@@ -224,11 +224,11 @@ class JwksVerifier {
     if (Date.now() > this.expires || !this.keys.some(k => k.kid === header.kid)) {
       const response = await fetch(this.issuer + "/.well-known/jwks.json", { signal: AbortSignal.timeout(5000) });
       if (!response.ok) throw new Error("JWKS unavailable");
-      this.keys = (await response.json() as { keys: JsonWebKey[] }).keys;
+      this.keys = (await response.json() as { keys: JwkRsa[] }).keys;
       this.expires = Date.now() + 300000;
     }
     const key = this.keys.find(k => k.kid === header.kid && k.kty === "RSA" && k.use === "sig");
-    if (!key || !verifySignature("RSA-SHA256", Buffer.from(h + "." + p), createPublicKey({ key: key as import("node:crypto").JsonWebKey, format: "jwk" }), Buffer.from(sig, "base64url"))) throw new Error("invalid signature");
+    if (!key || !verifySignature("RSA-SHA256", Buffer.from(h + "." + p), createPublicKey({ key: { kty: "RSA", n: key.n!, e: key.e! }, format: "jwk" }), Buffer.from(sig, "base64url"))) throw new Error("invalid signature");
     const claims = JSON.parse(Buffer.from(p, "base64url").toString()) as AuthClaims;
     const now = Math.floor(Date.now() / 1000);
     if (claims.iss !== this.issuer + "/" || !(typeof claims.aud === "string" ? claims.aud === audience : claims.aud?.includes(audience)) || !claims.exp || claims.exp <= now || (claims.nbf !== undefined && claims.nbf > now)) throw new Error("invalid claims");
