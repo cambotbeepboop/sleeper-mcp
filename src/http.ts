@@ -19,6 +19,7 @@ export interface HttpServerOptions extends CreateServerOptions {
    * Only for deployments that terminate authentication in front of the server.
    */
   insecureNoAuth?: boolean;
+  /** Trusted OAuth issuer URL. */
   oauthIssuer?: string | null;
   oauthAudience?: string | null;
   oauthAllowedSub?: string | null;
