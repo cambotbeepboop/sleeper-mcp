@@ -115,7 +115,7 @@ export async function startHttpServer(options: HttpServerOptions = {}): Promise<
     let canWrite = false;
     if (oauthEnabled) {
       try {
-        const match = /^Bearer\\s+(\\S+)$/i.exec(req.headers.authorization ?? "");
+        const match = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization ?? "");
         if (!match?.[1]) throw new Error("missing token");
         const claims = await jwks!.verify(match[1], audience);
         if (claims.sub !== allowedSub || !claims.permissions?.includes("read:fantasy")) throw new Error("access denied");
