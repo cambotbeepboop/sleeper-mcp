@@ -98,6 +98,10 @@ export async function startHttpServer(options: HttpServerOptions = {}): Promise<
       return;
     }
 
+    if (oauthEnabled && url.pathname === "/.well-known/oauth-protected-resource/mcp") {
+      json(res, 200, { resource: audience, authorization_servers: [issuer], scopes_supported: ["read:fantasy", "write:fantasy"] });
+      return;
+    }
     if (oauthEnabled && url.pathname === "/.well-known/oauth-protected-resource") {
       json(res, 200, { resource: audience, authorization_servers: [issuer], scopes_supported: ["read:fantasy", "write:fantasy"] });
       return;
@@ -116,7 +120,7 @@ export async function startHttpServer(options: HttpServerOptions = {}): Promise<
         if (claims.sub !== allowedSub || !claims.permissions?.includes("read:fantasy")) throw new Error("access denied");
         canWrite = claims.permissions.includes("write:fantasy");
       } catch {
-        res.setHeader("WWW-Authenticate", 'Bearer realm="sleeper-mcp", scope="read:fantasy"');
+        res.setHeader("WWW-Authenticate", 'Bearer realm="sleeper-mcp", resource_metadata="' + new URL("/.well-known/oauth-protected-resource/mcp", "https://" + req.headers.host).href + '", scope="read:fantasy"');
         json(res, 401, { error: "unauthorized" });
         return;
       }
