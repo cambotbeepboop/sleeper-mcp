@@ -1,5 +1,5 @@
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse, type Server as NodeHttpServer } from "node:http";
-import { randomUUID, createPublicKey, verify as verifySignature } from "node:crypto";
+import { randomUUID, createPublicKey, verify as verifySignature, type JsonWebKey } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer, SERVER_NAME, SERVER_VERSION, type CreateServerOptions } from "./server.js";
 import type { ServerContext } from "./context.js";
