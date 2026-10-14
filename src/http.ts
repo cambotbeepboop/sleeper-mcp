@@ -121,7 +121,7 @@ export async function startHttpServer(options: HttpServerOptions = {}): Promise<
         if (claims.sub !== allowedSub || !claims.permissions?.includes("read:fantasy")) throw new Error("access denied");
         canWrite = claims.permissions.includes("write:fantasy");
       } catch {
-        res.setHeader("WWW-Authenticate", 'Bearer realm="sleeper-mcp", resource_metadata="' + new URL("/.well-known/oauth-protected-resource/mcp", "https://" + req.headers.host).href + '", scope="read:fantasy"');
+        res.setHeader("WWW-Authenticate", 'Bearer realm="sleeper-mcp", resource_metadata="' + new URL("/.well-known/oauth-protected-resource/mcp", "https://" + req.headers.host).href + '", scope="read:fantasy write:fantasy"');
         json(res, 401, { error: "unauthorized" });
         return;
       }
@@ -143,7 +143,7 @@ export async function startHttpServer(options: HttpServerOptions = {}): Promise<
       res.on("close", () => {
         transport.close().catch(() => {});
       });
-      const { server } = createServer({ ...options, preloadPlayers: false, allowWrites: oauthEnabled ? canWrite : ctx.allowWrites });
+      const { server } = createServer({ ...options, preloadPlayers: false, allowWrites: oauthEnabled ? (ctx.allowWrites && canWrite) : ctx.allowWrites });
       await server.connect(transport);
       await transport.handleRequest(req, res);
     } catch (err) {
