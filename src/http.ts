@@ -1,5 +1,5 @@
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse, type Server as NodeHttpServer } from "node:http";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createPublicKey, verify as verifySignature } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer, SERVER_NAME, SERVER_VERSION, type CreateServerOptions } from "./server.js";
 import type { ServerContext } from "./context.js";
@@ -19,6 +19,10 @@ export interface HttpServerOptions extends CreateServerOptions {
    * Only for deployments that terminate authentication in front of the server.
    */
   insecureNoAuth?: boolean;
+  /** Trusted OAuth issuer URL. */
+  oauthIssuer?: string | null;
+  oauthAudience?: string | null;
+  oauthAllowedSub?: string | null;
 }
 
 export interface RunningHttpServer {
@@ -42,9 +46,16 @@ export async function startHttpServer(options: HttpServerOptions = {}): Promise<
   const corsOrigin = options.corsOrigin ?? "*";
   const mcpPath = options.path ?? "/mcp";
   const insecureNoAuth = options.insecureNoAuth ?? /^(1|true|yes)$/i.test(process.env.SLEEPER_MCP_INSECURE_NO_AUTH ?? "");
-  const { server, ctx } = createServer(options);
+  const issuer = (options.oauthIssuer ?? process.env.AUTH0_ISSUER ?? "").replace(/\/$/, "");
+  const audience = options.oauthAudience ?? process.env.AUTH0_AUDIENCE ?? "";
+  const allowedSub = options.oauthAllowedSub ?? process.env.AUTH0_ALLOWED_SUB ?? "";
+  if (issuer && (!issuer.startsWith("https://") || !audience || !allowedSub)) throw new Error("OAuth requires AUTH0_ISSUER, AUTH0_AUDIENCE and AUTH0_ALLOWED_SUB.");
+  const oauthEnabled = Boolean(issuer);
+  if (oauthEnabled && authToken) throw new Error("OAuth and static bearer auth cannot both be enabled.");
+  const { ctx } = createServer(options);
+  const jwks = oauthEnabled ? new JwksVerifier(issuer) : null;
 
-  if (ctx.auth && ctx.allowWrites && !authToken && !isLoopback(host) && !insecureNoAuth) {
+  if (ctx.auth && ctx.allowWrites && !authToken && !oauthEnabled && !isLoopback(host) && !insecureNoAuth) {
     throw new Error(
       `Refusing to start: a Sleeper session with account write tools enabled would listen on ${host} ` +
         "without authentication, so anyone who can reach this port could change your lineups, drop players " +
@@ -88,11 +99,33 @@ export async function startHttpServer(options: HttpServerOptions = {}): Promise<
       return;
     }
 
+    if (oauthEnabled && url.pathname === "/.well-known/oauth-protected-resource/mcp") {
+      json(res, 200, { resource: audience, authorization_servers: [issuer], scopes_supported: ["read:fantasy", "write:fantasy"] });
+      return;
+    }
+    if (oauthEnabled && url.pathname === "/.well-known/oauth-protected-resource") {
+      json(res, 200, { resource: audience, authorization_servers: [issuer], scopes_supported: ["read:fantasy", "write:fantasy"] });
+      return;
+    }
     if (url.pathname !== mcpPath) {
       json(res, 404, { error: "not_found", hint: `MCP endpoint is ${mcpPath}` });
       return;
     }
 
+    let canWrite = false;
+    if (oauthEnabled) {
+      try {
+        const match = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization ?? "");
+        if (!match?.[1]) throw new Error("missing token");
+        const claims = await jwks!.verify(match[1], audience);
+        if (claims.sub !== allowedSub || !claims.permissions?.includes("read:fantasy")) throw new Error("access denied");
+        canWrite = claims.permissions.includes("write:fantasy");
+      } catch {
+        res.setHeader("WWW-Authenticate", 'Bearer realm="sleeper-mcp", resource_metadata="' + new URL("/.well-known/oauth-protected-resource/mcp", "https://" + req.headers.host).href + '", scope="read:fantasy write:fantasy"');
+        json(res, 401, { error: "unauthorized" });
+        return;
+      }
+    }
     if (authToken && !authorized(req, authToken)) {
       res.setHeader("WWW-Authenticate", 'Bearer realm="sleeper-mcp"');
       json(res, 401, { error: "unauthorized" });
@@ -110,6 +143,7 @@ export async function startHttpServer(options: HttpServerOptions = {}): Promise<
       res.on("close", () => {
         transport.close().catch(() => {});
       });
+      const { server } = createServer({ ...options, preloadPlayers: false, allowWrites: oauthEnabled ? (ctx.allowWrites && canWrite) : ctx.allowWrites });
       await server.connect(transport);
       await transport.handleRequest(req, res);
     } catch (err) {
@@ -131,7 +165,7 @@ export async function startHttpServer(options: HttpServerOptions = {}): Promise<
   const displayHost = host === "0.0.0.0" || host === "::" ? "localhost" : host;
   const publicUrl = `http://${displayHost}:${actualPort}${mcpPath}`;
   ctx.log(`listening on ${publicUrl}${authToken ? " (bearer auth enabled)" : ""}${ctx.auth ? (ctx.allowWrites ? " (Sleeper session: account write tools enabled)" : " (Sleeper session: read-only)") : ""}`);
-  if (ctx.auth && ctx.allowWrites && !authToken && !isLoopback(host)) {
+  if (ctx.auth && ctx.allowWrites && !authToken && !oauthEnabled && !isLoopback(host)) {
     ctx.log("WARNING: account write tools are reachable without authentication (SLEEPER_MCP_INSECURE_NO_AUTH is set)");
   }
 
@@ -174,3 +208,30 @@ function json(res: ServerResponse, status: number, body: unknown): void {
 }
 
 export { randomUUID };
+
+interface JwkRsa { kid?: string; kty?: string; use?: string; n?: string; e?: string; [key: string]: unknown }
+interface AuthClaims { sub?: string; permissions?: string[]; iss?: string; aud?: string | string[]; exp?: number; nbf?: number }
+class JwksVerifier {
+  private keys: JwkRsa[] = [];
+  private expires = 0;
+  constructor(private readonly issuer: string) {}
+  async verify(jwt: string, audience: string): Promise<AuthClaims> {
+    const parts = jwt.split(".");
+    if (parts.length !== 3) throw new Error("invalid JWT");
+    const [h, p, sig] = parts as [string, string, string];
+    const header = JSON.parse(Buffer.from(h, "base64url").toString()) as { alg?: string; kid?: string };
+    if (header.alg !== "RS256" || !header.kid) throw new Error("invalid JWT header");
+    if (Date.now() > this.expires || !this.keys.some(k => k.kid === header.kid)) {
+      const response = await fetch(this.issuer + "/.well-known/jwks.json", { signal: AbortSignal.timeout(5000) });
+      if (!response.ok) throw new Error("JWKS unavailable");
+      this.keys = (await response.json() as { keys: JwkRsa[] }).keys;
+      this.expires = Date.now() + 300000;
+    }
+    const key = this.keys.find(k => k.kid === header.kid && k.kty === "RSA" && k.use === "sig");
+    if (!key || !verifySignature("RSA-SHA256", Buffer.from(h + "." + p), createPublicKey({ key: { kty: "RSA", n: key.n!, e: key.e! }, format: "jwk" }), Buffer.from(sig, "base64url"))) throw new Error("invalid signature");
+    const claims = JSON.parse(Buffer.from(p, "base64url").toString()) as AuthClaims;
+    const now = Math.floor(Date.now() / 1000);
+    if (claims.iss !== this.issuer + "/" || !(typeof claims.aud === "string" ? claims.aud === audience : claims.aud?.includes(audience)) || !claims.exp || claims.exp <= now || (claims.nbf !== undefined && claims.nbf > now)) throw new Error("invalid claims");
+    return claims;
+  }
+}
