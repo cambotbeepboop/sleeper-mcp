@@ -1,5 +1,5 @@
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse, type Server as NodeHttpServer } from "node:http";
-import { randomUUID, createPublicKey, verify as verifySignature, type JsonWebKey } from "node:crypto";
+import { randomUUID, createPublicKey, verify as verifySignature } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer, SERVER_NAME, SERVER_VERSION, type CreateServerOptions } from "./server.js";
 import type { ServerContext } from "./context.js";
@@ -209,9 +209,10 @@ function json(res: ServerResponse, status: number, body: unknown): void {
 
 export { randomUUID };
 
+interface JwkRsa { kid?: string; kty?: string; use?: string; n?: string; e?: string; [key: string]: unknown }
 interface AuthClaims { sub?: string; permissions?: string[]; iss?: string; aud?: string | string[]; exp?: number; nbf?: number }
 class JwksVerifier {
-  private keys: JsonWebKey[] = [];
+  private keys: JwkRsa[] = [];
   private expires = 0;
   constructor(private readonly issuer: string) {}
   async verify(jwt: string, audience: string): Promise<AuthClaims> {
@@ -227,7 +228,7 @@ class JwksVerifier {
       this.expires = Date.now() + 300000;
     }
     const key = this.keys.find(k => k.kid === header.kid && k.kty === "RSA" && k.use === "sig");
-    if (!key || !verifySignature("RSA-SHA256", Buffer.from(h + "." + p), createPublicKey({ key, format: "jwk" }), Buffer.from(sig, "base64url"))) throw new Error("invalid signature");
+    if (!key || !verifySignature("RSA-SHA256", Buffer.from(h + "." + p), createPublicKey({ key: key as import("node:crypto").JsonWebKey, format: "jwk" }), Buffer.from(sig, "base64url"))) throw new Error("invalid signature");
     const claims = JSON.parse(Buffer.from(p, "base64url").toString()) as AuthClaims;
     const now = Math.floor(Date.now() / 1000);
     if (claims.iss !== this.issuer + "/" || !(typeof claims.aud === "string" ? claims.aud === audience : claims.aud?.includes(audience)) || !claims.exp || claims.exp <= now || (claims.nbf !== undefined && claims.nbf > now)) throw new Error("invalid claims");
