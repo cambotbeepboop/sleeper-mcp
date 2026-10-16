@@ -142,12 +142,20 @@ export function registerAccountTools(server: McpServer, ctx: ServerContext): voi
         const bundle = await loadLeague(ctx, league_id);
         await ctx.players.ensureLoaded();
         const roster = await resolveOwnRoster(ctx, bundle, roster_id);
-        const plan = planLineup(ctx, bundle, roster, { moves, starters });
+        const { week } = await resolveWeek(ctx, undefined);
+        // The authenticated roster-level starters may differ from the scoring lineup.
+        // Plan only from the actual weekly matchup leg, never the roster default.
+        const legs = await auth.matchupLegStarters(bundle.league.league_id, week);
+        const actual = legs.find((leg) => leg.roster_id === roster.roster_id);
+        if (!actual?.starters?.length) {
+          throw new ToolError("Could not read this week's actual matchup starters. No lineup change was attempted.");
+        }
+        const weeklyRoster: Roster = { ...roster, starters: actual.starters };
+        const plan = planLineup(ctx, bundle, weeklyRoster, { moves, starters });
         if (!plan.changes.length) {
           return { league_id: bundle.league.league_id, team: teamLabel(bundle.teams, roster.roster_id), changed: false, note: "Lineup already matches; nothing sent.", roster: describeRoster(ctx, bundle, roster, true) };
         }
-        const { week } = await resolveWeek(ctx, undefined);
-        return commitRoster(ctx, bundle, roster, dry_run, plan.changes, { starters: plan.starters }, () =>
+        return commitRoster(ctx, bundle, weeklyRoster, dry_run, plan.changes, { starters: plan.starters }, () =>
           auth.updateStarters(bundle.league.league_id, roster.roster_id, plan.starters, week).then(async (result) => {
             const actual = (await auth.matchupLegStarters(bundle.league.league_id, week))
               .find((leg) => leg.roster_id === roster.roster_id);

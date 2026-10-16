@@ -26,8 +26,16 @@ function fakeGraphql(handlers: Record<string, Handler> = {}) {
     const body = JSON.parse(String(init?.body)) as { operationName: string; variables: Record<string, unknown>; query: string };
     calls.push({ op: body.operationName, vars: body.variables, headers: (init?.headers ?? {}) as Record<string, string> });
     expect(body.query).toContain(body.operationName);
-    const handler = body.operationName === "matchup_legs" && calls.some(x => x.op === "update_matchup_leg")
-      ? (() => [{ roster_id: calls.filter(x => x.op === "update_matchup_leg").at(-1)!.vars.roster_id as number, starters: calls.filter(x => x.op === "update_matchup_leg").at(-1)!.vars.starters }])
+    const handler = body.operationName === "matchup_legs"
+      ? (() => {
+          const dedicated = table.matchup_legs?.({ league_id: LEAGUE_ID });
+          const live = table.league_rosters?.({ league_id: LEAGUE_ID });
+          const rows = Array.isArray(dedicated) ? dedicated as Array<{ roster_id: number; starters: string[] }>
+            : Array.isArray(live) ? live as Array<{ roster_id: number; starters: string[] }> : [ROSTER_1];
+          const updated = calls.filter(x => x.op === "update_matchup_leg").at(-1);
+          return rows.map(row => updated && row.roster_id === updated.vars.roster_id
+            ? { roster_id: row.roster_id, starters: updated.vars.starters } : row);
+        })
       : table[body.operationName];
     if (!handler) {
       return json(200, { data: { [body.operationName]: null }, errors: [{ code: "unauthorized", message: "Unauthorized", path: [body.operationName] }] });
@@ -310,6 +318,7 @@ describe("set_lineup", () => {
   it("fills an empty slot when no bench player is named", async () => {
     const { call, gql, ff } = await connectWithAuth({
       update_matchup_leg: (v) => ({ ...ROSTER_1, roster_id: 2, owner_id: "222", players: ["4984", "SF", "11001"], starters: v.starters }),
+      matchup_legs: () => [{ roster_id: 1, starters: ROSTER_1.starters }, { roster_id: 2, starters: ["4984", "0", "0", "0", "0", "0", "0", "0", "SF"] }],
     });
     // Bob's roster (2) has empty slots; give him a bench RB and act on it explicitly via roster_id.
     (ff as unknown as { set: (path: string, body: unknown) => void }).set(`/league/${LEAGUE_ID}/rosters`, [
