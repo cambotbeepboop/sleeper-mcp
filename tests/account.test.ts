@@ -228,7 +228,7 @@ describe("set_lineup", () => {
     expect(result.isError, JSON.stringify(result.content)).toBeFalsy();
     expect(data).toMatchObject({ dry_run: false, team: "Alice's Avengers (Alice)", changes: ["TE: Travis Kelce (TE, KC) → Sam LaPorta (TE, DET)"] });
     const sent = gql.last("update_matchup_leg")!;
-    expect(sent.vars).toEqual({ league_id: LEAGUE_ID, roster_id: 1, round: 6, leg: 6, starters: ["4046", "9226", "8138", "7564", "6794", "9509", "8112", "4195", "DET"] });
+    expect(sent.vars).toEqual({ league_id: LEAGUE_ID, roster_id: 1, round: 5, leg: 5, starters: ["4046", "9226", "8138", "7564", "6794", "9509", "8112", "4195", "DET"] });
     const starters = (data!.roster as { starters: { slot: string; name: string }[] }).starters;
     expect(starters.find((s) => s.slot === "TE")?.name).toBe("Sam LaPorta");
   });
