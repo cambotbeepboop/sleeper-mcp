@@ -318,6 +318,7 @@ describe("set_lineup", () => {
   it("fills an empty slot when no bench player is named", async () => {
     const { call, gql, ff } = await connectWithAuth({
       update_matchup_leg: (v) => ({ ...ROSTER_1, roster_id: 2, owner_id: "222", players: ["4984", "SF", "11001"], starters: v.starters }),
+      matchup_legs: () => [{ roster_id: 2, starters: ["4984", "0", "0", "0", "0", "0", "0", "0", "SF"] }],
     });
     // Bob's roster (2) has empty slots; give him a bench RB and act on it explicitly via roster_id.
     (ff as unknown as { set: (path: string, body: unknown) => void }).set(`/league/${LEAGUE_ID}/rosters`, [
