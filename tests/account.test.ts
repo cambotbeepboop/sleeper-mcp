@@ -359,7 +359,7 @@ describe("check_lineups with a session", () => {
 
     const applied = await call("set_lineup", report!.set_lineup);
     expect(applied.result.isError, JSON.stringify(applied.result.content)).toBeFalsy();
-    expect(gql.last("roster_update_starters")!.vars.starters).toEqual(["4046", "9226", "6813", "7564", "6794", "9509", "8112", "4195", "DET"]);
+    expect(gql.last("update_matchup_leg")!.vars.starters).toEqual(["4046", "9226", "6813", "7564", "6794", "9509", "8112", "4195", "DET"]);
   });
 });
 
