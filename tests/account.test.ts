@@ -26,8 +26,14 @@ function fakeGraphql(handlers: Record<string, Handler> = {}) {
     const body = JSON.parse(String(init?.body)) as { operationName: string; variables: Record<string, unknown>; query: string };
     calls.push({ op: body.operationName, vars: body.variables, headers: (init?.headers ?? {}) as Record<string, string> });
     expect(body.query).toContain(body.operationName);
-    const handler = body.operationName === "matchup_legs" && calls.some(x => x.op === "update_matchup_leg")
-      ? (() => [{ roster_id: calls.filter(x => x.op === "update_matchup_leg").at(-1)!.vars.roster_id as number, starters: calls.filter(x => x.op === "update_matchup_leg").at(-1)!.vars.starters }])
+    const handler = body.operationName === "matchup_legs"
+      ? (() => {
+          const updated = calls.filter(x => x.op === "update_matchup_leg").at(-1);
+          if (updated) return [{ roster_id: updated.vars.roster_id as number, starters: updated.vars.starters }];
+          const live = table.league_rosters?.({ league_id: LEAGUE_ID });
+          const liveRows = Array.isArray(live) ? live as Array<{ roster_id: number; starters: string[] }> : [ROSTER_1];
+          return liveRows.map(r => ({ roster_id: r.roster_id, starters: r.starters }));
+        })
       : table[body.operationName];
     if (!handler) {
       return json(200, { data: { [body.operationName]: null }, errors: [{ code: "unauthorized", message: "Unauthorized", path: [body.operationName] }] });
