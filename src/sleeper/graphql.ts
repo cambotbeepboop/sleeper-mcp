@@ -343,7 +343,14 @@ export class SleeperGraphqlClient {
   }
 
   /** Update the scoring lineup for a specific matchup week, not the roster-level default starters. */
-  updateStarters(leagueId: string, rosterId: number, starters: string[], week: number): Promise<GqlRoster> {
+  updateStarters(leagueId: string, rosterId: number, starters: string[], week?: number): Promise<GqlRoster> {
+    if (week === undefined) {
+      return this.execute<GqlRoster>(
+        "roster_update_starters",
+        `mutation roster_update_starters($league_id: Snowflake!, $roster_id: Int!, $starters: [String]) { roster_update_starters(league_id: $league_id, roster_id: $roster_id, starters: $starters) { ${ROSTER_FIELDS} } }`,
+        { league_id: leagueId, roster_id: rosterId, starters },
+      );
+    }
     return this.execute<GqlRoster>(
       "update_matchup_leg",
       `mutation update_matchup_leg($league_id: Snowflake!, $roster_id: Int!, $round: Int!, $leg: Int!, $starters: [String]) { update_matchup_leg(league_id: $league_id, roster_id: $roster_id, round: $round, leg: $leg, starters: $starters) { roster_id starters } }`,
