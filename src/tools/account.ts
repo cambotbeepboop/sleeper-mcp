@@ -148,7 +148,14 @@ export function registerAccountTools(server: McpServer, ctx: ServerContext): voi
         }
         const { week } = await resolveWeek(ctx, undefined);
         return commitRoster(ctx, bundle, roster, dry_run, plan.changes, { starters: plan.starters }, () =>
-          auth.updateStarters(bundle.league.league_id, roster.roster_id, plan.starters, week),
+          auth.updateStarters(bundle.league.league_id, roster.roster_id, plan.starters, week).then(async (result) => {
+            const actual = (await auth.matchupLegStarters(bundle.league.league_id, week))
+              .find((leg) => leg.roster_id === roster.roster_id);
+            if (!actual || JSON.stringify(actual.starters) !== JSON.stringify(plan.starters)) {
+              throw new ToolError("Weekly matchup starters could not be verified; do not treat this change as saved.");
+            }
+            return { ...result, starters: actual.starters };
+          }),
         );
       }),
   );
