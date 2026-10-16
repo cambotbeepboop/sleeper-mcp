@@ -26,7 +26,9 @@ function fakeGraphql(handlers: Record<string, Handler> = {}) {
     const body = JSON.parse(String(init?.body)) as { operationName: string; variables: Record<string, unknown>; query: string };
     calls.push({ op: body.operationName, vars: body.variables, headers: (init?.headers ?? {}) as Record<string, string> });
     expect(body.query).toContain(body.operationName);
-    const handler = table[body.operationName];
+    const handler = body.operationName === "matchup_legs" && calls.some(x => x.op === "update_matchup_leg")
+      ? (() => [{ roster_id: (calls.filter(x => x.op === "update_matchup_leg").at(-1)!.vars.roster_id as number), starters: calls.filter(x => x.op === "update_matchup_leg").at(-1)!.vars.starters }])
+      : table[body.operationName];
     if (!handler) {
       return json(200, { data: { [body.operationName]: null }, errors: [{ code: "unauthorized", message: "Unauthorized", path: [body.operationName] }] });
     }
@@ -72,6 +74,8 @@ const ROSTER_1 = {
 /** Echo back what the mutation asked for, the way Sleeper returns the updated roster. */
 const rosterEcho: Record<string, Handler> = {
   roster_update_starters: (v) => ({ ...ROSTER_1, starters: v.starters }),
+  update_matchup_leg: (v) => ({ ...ROSTER_1, roster_id: v.roster_id, starters: v.starters }),
+  matchup_legs: () => [],
   roster_update_reserve: (v) => ({ ...ROSTER_1, reserve: v.reserve }),
   roster_update_taxi: (v) => ({ ...ROSTER_1, taxi: v.taxi }),
 };
@@ -224,8 +228,8 @@ describe("set_lineup", () => {
     const { data, result } = await call("set_lineup", { league_id: LEAGUE_ID, moves: [{ start: "Sam LaPorta", bench: "Travis Kelce" }] });
     expect(result.isError, JSON.stringify(result.content)).toBeFalsy();
     expect(data).toMatchObject({ dry_run: false, team: "Alice's Avengers (Alice)", changes: ["TE: Travis Kelce (TE, KC) → Sam LaPorta (TE, DET)"] });
-    const sent = gql.last("roster_update_starters")!;
-    expect(sent.vars).toEqual({ league_id: LEAGUE_ID, roster_id: 1, starters: ["4046", "9226", "8138", "7564", "6794", "9509", "8112", "4195", "DET"] });
+    const sent = gql.last("update_matchup_leg")!;
+    expect(sent.vars).toEqual({ league_id: LEAGUE_ID, roster_id: 1, round: 6, leg: 6, starters: ["4046", "9226", "8138", "7564", "6794", "9509", "8112", "4195", "DET"] });
     const starters = (data!.roster as { starters: { slot: string; name: string }[] }).starters;
     expect(starters.find((s) => s.slot === "TE")?.name).toBe("Sam LaPorta");
   });
@@ -240,7 +244,7 @@ describe("set_lineup", () => {
     expect(result.isError, JSON.stringify(result.content)).toBeFalsy();
     expect(gql.last("league_rosters")!.vars).toEqual({ league_id: LEAGUE_ID });
     expect(data!.changes).toEqual(["RB: Breece Hall (RB, NYJ) → Rookie Runner (RB, GB)"]);
-    expect(gql.last("roster_update_starters")!.vars.starters).toEqual(["4046", "9226", "11000", "7564", "6794", "5850", "8112", "4195", "DET"]);
+    expect(gql.last("update_matchup_leg")!.vars.starters).toEqual(["4046", "9226", "11000", "7564", "6794", "5850", "8112", "4195", "DET"]);
   });
 
   it("falls back to the public roster when the live read fails", async () => {
@@ -253,14 +257,14 @@ describe("set_lineup", () => {
     const { call, gql } = await connectWithAuth(rosterEcho);
     const { data } = await call("set_lineup", { league_id: LEAGUE_ID, moves: [{ start: "Drake London", bench: "Justin Jefferson" }] });
     expect(data!.changes).toEqual(["WR: Justin Jefferson (WR, MIN) → Drake London (WR, ATL)", "FLEX: Drake London (WR, ATL) → Justin Jefferson (WR, MIN)"]);
-    expect(gql.last("roster_update_starters")!.vars.starters).toEqual(["4046", "9226", "8138", "7564", "8112", "5850", "6794", "4195", "DET"]);
+    expect(gql.last("update_matchup_leg")!.vars.starters).toEqual(["4046", "9226", "8138", "7564", "8112", "5850", "6794", "4195", "DET"]);
   });
 
   it("dry_run validates and previews without calling Sleeper", async () => {
     const { call, gql } = await connectWithAuth(rosterEcho);
     const { data } = await call("set_lineup", { league_id: LEAGUE_ID, moves: [{ start: "Jonathan Taylor", bench: "Breece Hall" }], dry_run: true });
     expect(data).toMatchObject({ dry_run: true, changes: ["RB: Breece Hall (RB, NYJ) → Jonathan Taylor (RB, IND)"] });
-    expect(gql.calls.filter((x) => x.op === "roster_update_starters")).toHaveLength(0);
+    expect(gql.calls.filter((x) => x.op === "update_matchup_leg")).toHaveLength(0);
   });
 
   it("accepts a full starters list with empty slots", async () => {
@@ -270,7 +274,7 @@ describe("set_lineup", () => {
       starters: ["Patrick Mahomes", "Bijan Robinson", "Jonathan Taylor", "Ja'Marr Chase", "Justin Jefferson", "Sam LaPorta", "Breece Hall", "Harrison Butker", "Lions"],
     });
     expect(result.isError, JSON.stringify(result.content)).toBeFalsy();
-    expect(gql.last("roster_update_starters")!.vars.starters).toEqual(["4046", "9226", "6813", "7564", "6794", "9509", "8138", "4195", "DET"]);
+    expect(gql.last("update_matchup_leg")!.vars.starters).toEqual(["4046", "9226", "6813", "7564", "6794", "9509", "8138", "4195", "DET"]);
     expect(data!.changes).toHaveLength(3);
   });
 
@@ -294,19 +298,19 @@ describe("set_lineup", () => {
 
     r = await call("set_lineup", { league_id: LEAGUE_ID });
     expect(r.result.isError).toBe(true);
-    expect(gql.calls.filter((x) => x.op === "roster_update_starters")).toHaveLength(0);
+    expect(gql.calls.filter((x) => x.op === "update_matchup_leg")).toHaveLength(0);
   });
 
   it("reports when nothing changes", async () => {
     const { call, gql } = await connectWithAuth(rosterEcho);
     const { data } = await call("set_lineup", { league_id: LEAGUE_ID, moves: [{ start: "Travis Kelce", bench: "Travis Kelce" }] });
     expect(data).toMatchObject({ changed: false });
-    expect(gql.calls.filter((x) => x.op === "roster_update_starters")).toHaveLength(0);
+    expect(gql.calls.filter((x) => x.op === "update_matchup_leg")).toHaveLength(0);
   });
 
   it("fills an empty slot when no bench player is named", async () => {
     const { call, gql, ff } = await connectWithAuth({
-      roster_update_starters: (v) => ({ ...ROSTER_1, roster_id: 2, owner_id: "222", players: ["4984", "SF", "11001"], starters: v.starters }),
+      update_matchup_leg: (v) => ({ ...ROSTER_1, roster_id: 2, owner_id: "222", players: ["4984", "SF", "11001"], starters: v.starters }),
     });
     // Bob's roster (2) has empty slots; give him a bench RB and act on it explicitly via roster_id.
     (ff as unknown as { set: (path: string, body: unknown) => void }).set(`/league/${LEAGUE_ID}/rosters`, [
@@ -316,7 +320,7 @@ describe("set_lineup", () => {
     const { data, result } = await call("set_lineup", { league_id: LEAGUE_ID, roster_id: 2, moves: [{ start: "Handcuff Harry" }] });
     expect(result.isError, JSON.stringify(result.content)).toBeFalsy();
     expect(data!.changes).toEqual(["RB: (empty) → Handcuff Harry (RB, PHI)"]);
-    const sent = gql.last("roster_update_starters")!;
+    const sent = gql.last("update_matchup_leg")!;
     expect(sent.vars.roster_id).toBe(2);
     expect(sent.vars.starters).toEqual(["4984", "11001", "0", "0", "0", "0", "0", "0", "SF"]);
 
@@ -327,7 +331,7 @@ describe("set_lineup", () => {
 
   it("surfaces Sleeper's refusal message", async () => {
     const { call } = await connectWithAuth({
-      roster_update_starters: () => raw(200, { data: { roster_update_starters: null }, errors: [{ code: "invalid", message: "Games have already started for this player", path: ["roster_update_starters"] }] }),
+      update_matchup_leg: () => raw(200, { data: { update_matchup_leg: null }, errors: [{ code: "invalid", message: "Games have already started for this player", path: ["update_matchup_leg"] }] }),
     });
     const { result, text } = await call("set_lineup", { league_id: LEAGUE_ID, moves: [{ start: "Sam LaPorta", bench: "Travis Kelce" }] });
     expect(result.isError).toBe(true);
@@ -352,11 +356,11 @@ describe("check_lineups with a session", () => {
       ["TE", "out", "Sam LaPorta"],
     ]);
     expect(report!.set_lineup).toEqual({ league_id: LEAGUE_ID, moves: [{ start: "6813", slot: "RB" }, { start: "9509", bench: "5850" }] });
-    expect(gql.calls.filter((x) => x.op === "roster_update_starters")).toHaveLength(0);
+    expect(gql.calls.filter((x) => x.op === "update_matchup_leg")).toHaveLength(0);
 
     const applied = await call("set_lineup", report!.set_lineup);
     expect(applied.result.isError, JSON.stringify(applied.result.content)).toBeFalsy();
-    expect(gql.last("roster_update_starters")!.vars.starters).toEqual(["4046", "9226", "6813", "7564", "6794", "9509", "8112", "4195", "DET"]);
+    expect(gql.last("update_matchup_leg")!.vars.starters).toEqual(["4046", "9226", "6813", "7564", "6794", "9509", "8112", "4195", "DET"]);
   });
 });
 
@@ -371,8 +375,8 @@ describe("update_ir / update_taxi", () => {
     expect(result.isError, JSON.stringify(result.content)).toBeFalsy();
     expect(data!.changes).toEqual(["Travis Kelce (TE, KC): starter → IR (slot left empty, fill it with set_lineup)"]);
     const ops = gql.calls.map((x) => x.op).filter((op) => op.startsWith("roster_update"));
-    expect(ops).toEqual(["roster_update_starters", "roster_update_reserve"]);
-    expect(gql.last("roster_update_starters")!.vars.starters).toEqual(["4046", "9226", "8138", "7564", "6794", "0", "8112", "4195", "DET"]);
+    expect(ops).toEqual(["update_matchup_leg", "roster_update_reserve"]);
+    expect(gql.last("update_matchup_leg")!.vars.starters).toEqual(["4046", "9226", "8138", "7564", "6794", "0", "8112", "4195", "DET"]);
     expect(gql.last("roster_update_reserve")!.vars).toEqual({ league_id: LEAGUE_ID, roster_id: 1, reserve: ["5850"] });
     expect((data!.roster as { ir: { name: string }[] }).ir.map((p) => p.name)).toEqual(["Travis Kelce"]);
 
