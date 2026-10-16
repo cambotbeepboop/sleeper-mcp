@@ -30,6 +30,8 @@ function fakeGraphql(handlers: Record<string, Handler> = {}) {
       ? (() => {
           const updated = calls.filter(x => x.op === "update_matchup_leg").at(-1);
           if (updated) return [{ roster_id: updated.vars.roster_id as number, starters: updated.vars.starters }];
+          const dedicated = table.matchup_legs?.({ league_id: LEAGUE_ID });
+          if (Array.isArray(dedicated)) return dedicated;
           const live = table.league_rosters?.({ league_id: LEAGUE_ID });
           const liveRows = Array.isArray(live) ? live as Array<{ roster_id: number; starters: string[] }> : [ROSTER_1];
           return liveRows.map(r => ({ roster_id: r.roster_id, starters: r.starters }));
