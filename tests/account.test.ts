@@ -27,7 +27,7 @@ function fakeGraphql(handlers: Record<string, Handler> = {}) {
     calls.push({ op: body.operationName, vars: body.variables, headers: (init?.headers ?? {}) as Record<string, string> });
     expect(body.query).toContain(body.operationName);
     const handler = body.operationName === "matchup_legs" && calls.some(x => x.op === "update_matchup_leg")
-      ? (() => [{ roster_id: (calls.filter(x => x.op === "update_matchup_leg").at(-1)!.vars.roster_id as number), starters: calls.filter(x => x.op === "update_matchup_leg").at(-1)!.vars.starters }])
+      ? (() => [{ roster_id: calls.filter(x => x.op === "update_matchup_leg").at(-1)!.vars.roster_id as number, starters: calls.filter(x => x.op === "update_matchup_leg").at(-1)!.vars.starters }])
       : table[body.operationName];
     if (!handler) {
       return json(200, { data: { [body.operationName]: null }, errors: [{ code: "unauthorized", message: "Unauthorized", path: [body.operationName] }] });
@@ -75,7 +75,6 @@ const ROSTER_1 = {
 const rosterEcho: Record<string, Handler> = {
   roster_update_starters: (v) => ({ ...ROSTER_1, starters: v.starters }),
   update_matchup_leg: (v) => ({ ...ROSTER_1, roster_id: v.roster_id, starters: v.starters }),
-  matchup_legs: () => [],
   roster_update_reserve: (v) => ({ ...ROSTER_1, reserve: v.reserve }),
   roster_update_taxi: (v) => ({ ...ROSTER_1, taxi: v.taxi }),
 };
@@ -356,11 +355,11 @@ describe("check_lineups with a session", () => {
       ["TE", "out", "Sam LaPorta"],
     ]);
     expect(report!.set_lineup).toEqual({ league_id: LEAGUE_ID, moves: [{ start: "6813", slot: "RB" }, { start: "9509", bench: "5850" }] });
-    expect(gql.calls.filter((x) => x.op === "update_matchup_leg")).toHaveLength(0);
+    expect(gql.calls.filter((x) => x.op === "roster_update_starters")).toHaveLength(0);
 
     const applied = await call("set_lineup", report!.set_lineup);
     expect(applied.result.isError, JSON.stringify(applied.result.content)).toBeFalsy();
-    expect(gql.last("update_matchup_leg")!.vars.starters).toEqual(["4046", "9226", "6813", "7564", "6794", "9509", "8112", "4195", "DET"]);
+    expect(gql.last("roster_update_starters")!.vars.starters).toEqual(["4046", "9226", "6813", "7564", "6794", "9509", "8112", "4195", "DET"]);
   });
 });
 
@@ -375,8 +374,8 @@ describe("update_ir / update_taxi", () => {
     expect(result.isError, JSON.stringify(result.content)).toBeFalsy();
     expect(data!.changes).toEqual(["Travis Kelce (TE, KC): starter → IR (slot left empty, fill it with set_lineup)"]);
     const ops = gql.calls.map((x) => x.op).filter((op) => op.startsWith("roster_update"));
-    expect(ops).toEqual(["update_matchup_leg", "roster_update_reserve"]);
-    expect(gql.last("update_matchup_leg")!.vars.starters).toEqual(["4046", "9226", "8138", "7564", "6794", "0", "8112", "4195", "DET"]);
+    expect(ops).toEqual(["roster_update_starters", "roster_update_reserve"]);
+    expect(gql.last("roster_update_starters")!.vars.starters).toEqual(["4046", "9226", "8138", "7564", "6794", "0", "8112", "4195", "DET"]);
     expect(gql.last("roster_update_reserve")!.vars).toEqual({ league_id: LEAGUE_ID, roster_id: 1, reserve: ["5850"] });
     expect((data!.roster as { ir: { name: string }[] }).ir.map((p) => p.name)).toEqual(["Travis Kelce"]);
 
