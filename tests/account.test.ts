@@ -28,13 +28,13 @@ function fakeGraphql(handlers: Record<string, Handler> = {}) {
     expect(body.query).toContain(body.operationName);
     const handler = body.operationName === "matchup_legs"
       ? (() => {
-          const updated = calls.filter(x => x.op === "update_matchup_leg").at(-1);
-          if (updated) return [{ roster_id: updated.vars.roster_id as number, starters: updated.vars.starters }];
           const dedicated = table.matchup_legs?.({ league_id: LEAGUE_ID });
-          if (Array.isArray(dedicated)) return dedicated;
           const live = table.league_rosters?.({ league_id: LEAGUE_ID });
-          const liveRows = Array.isArray(live) ? live as Array<{ roster_id: number; starters: string[] }> : [ROSTER_1];
-          return liveRows.map(r => ({ roster_id: r.roster_id, starters: r.starters }));
+          const rows = Array.isArray(dedicated) ? dedicated as Array<{ roster_id: number; starters: string[] }>
+            : Array.isArray(live) ? live as Array<{ roster_id: number; starters: string[] }> : [ROSTER_1];
+          const updated = calls.filter(x => x.op === "update_matchup_leg").at(-1);
+          return rows.map(row => updated && row.roster_id === updated.vars.roster_id
+            ? { roster_id: row.roster_id, starters: updated.vars.starters } : row);
         })
       : table[body.operationName];
     if (!handler) {
