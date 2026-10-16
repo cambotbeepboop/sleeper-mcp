@@ -342,12 +342,21 @@ export class SleeperGraphqlClient {
     );
   }
 
-  /** Replace the full starters array (league slot order; "0" marks an empty slot). */
-  updateStarters(leagueId: string, rosterId: number, starters: string[]): Promise<GqlRoster> {
+  /** Update the scoring lineup for a specific matchup week, not the roster-level default starters. */
+  updateStarters(leagueId: string, rosterId: number, starters: string[], week: number): Promise<GqlRoster> {
     return this.execute<GqlRoster>(
-      "roster_update_starters",
-      `mutation roster_update_starters($league_id: Snowflake!, $roster_id: Int!, $starters: [String]) { roster_update_starters(league_id: $league_id, roster_id: $roster_id, starters: $starters) { ${ROSTER_FIELDS} } }`,
-      { league_id: leagueId, roster_id: rosterId, starters },
+      "update_matchup_leg",
+      `mutation update_matchup_leg($league_id: Snowflake!, $roster_id: Int!, $round: Int!, $leg: Int!, $starters: [String]) { update_matchup_leg(league_id: $league_id, roster_id: $roster_id, round: $round, leg: $leg, starters: $starters) { roster_id starters } }`,
+      { league_id: leagueId, roster_id: rosterId, round: week, leg: week, starters },
+    );
+  }
+
+  /** Authenticated uncached weekly matchup read for independent post-write verification. */
+  matchupLegStarters(leagueId: string, week: number): Promise<Array<{ roster_id: number; starters: string[] | null }>> {
+    return this.execute<Array<{ roster_id: number; starters: string[] | null }>>(
+      "matchup_legs",
+      `query matchup_legs($league_id: Snowflake!, $round: Int!) { matchup_legs(league_id: $league_id, round: $round) { roster_id starters } }`,
+      { league_id: leagueId, round: week },
     );
   }
 
